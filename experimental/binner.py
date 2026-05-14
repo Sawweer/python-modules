@@ -29,15 +29,20 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
         metric. The transform step applies WoE encoding and returns only
         selected features.
 
+        When metric=None, no metric computation or feature selection is
+        performed — all features are binned and returned as WoE-encoded
+        values. metric_min and metric_max are ignored in this mode.
+
         Args:
-            metric (str): Metric used for feature selection. One of "gini",
-                "iv", "js". Default is "gini".
+            metric (str or None): Metric used for feature selection. One of
+                "gini", "iv", "js", or None. When None, all features are
+                retained and metric thresholds are ignored. Default is "gini".
             metric_min (float, optional): Minimum threshold (inclusive).
                 Features whose metric value is below this are excluded.
-                Default is None.
+                Ignored when metric=None. Default is None.
             metric_max (float, optional): Maximum threshold (inclusive).
                 Features whose metric value is above this are excluded.
-                Default is None.
+                Ignored when metric=None. Default is None.
             n_jobs (int): Number of parallel jobs for BinningProcess.
                 Default is -1.
             binning_process_params (dict, optional): Base parameters forwarded
@@ -55,9 +60,9 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
                 explicit split points passed to BinningProcess.
                 Default is None.
         """
-        if metric not in _VALID_METRICS:
+        if metric is not None and metric not in _VALID_METRICS:
             raise ValueError(
-                f"metric must be one of {_VALID_METRICS}, got '{metric}'."
+                f"metric must be one of {_VALID_METRICS} or None, got '{metric}'."
             )
         self.metric = metric
         self.metric_min = metric_min
@@ -125,10 +130,15 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
         Fit the BinningProcess on X and y, then compute Gini, IV and JS for
         every feature and determine which pass the metric threshold.
 
+        When metric=None, metric computation is skipped entirely and all
+        features are marked as selected.
+
         Populates:
             feature_names_in_ : all input feature names.
             metric_values_    : dict mapping feature -> {"gini", "iv", "js"}.
-            selected_features_: features passing the threshold.
+                                Empty when metric=None.
+            selected_features_: features passing the threshold (all features
+                                when metric=None).
 
         Args:
             X (DataFrame or array-like): Input features.
@@ -162,34 +172,33 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
         )
         self.binner.fit(X, y)
 
-        # Compute metrics and select features
+        # Always compute metrics for every feature
         self.metric_values_ = {}
         self.selected_features_ = []
 
         for variable in self.feature_names_in_:
             m = self._extract_metrics(variable)
             self.metric_values_[variable] = m
-            if self._passes_threshold(m[self.metric]):
+            # When metric=None retain all features; otherwise apply threshold
+            if self.metric is None or self._passes_threshold(m[self.metric]):
                 self.selected_features_.append(variable)
 
         return self
 
-    def transform(self, X, use_selected=True):
+    def transform(self, X):
         """
-        Apply WoE encoding via the fitted BinningProcess, then optionally
-        return only the selected features.
+        Apply WoE encoding via the fitted BinningProcess and return only
+        the selected features. When metric=None all features are returned.
 
         Args:
             X (DataFrame or array-like): Input features.
-            use_selected (bool): If True (default) return only selected
-                features. Set to False to return all fitted features.
 
         Returns:
             DataFrame: WoE-encoded DataFrame.
         """
         check_is_fitted(self, "selected_features_")
 
-        if not self.selected_features_ and use_selected:
+        if not self.selected_features_:
             if self.verbose:
                 print(
                     f"No features meet the {self.metric} thresholds "
@@ -201,15 +210,13 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
         transformed = self.binner.transform(
             X, metric_missing="empirical", metric_special="empirical"
         )
-        if use_selected:
-            cols = [c for c in self.selected_features_ if c in transformed.columns]
-            return transformed[cols]
-        return transformed
+        cols = [c for c in self.selected_features_ if c in transformed.columns]
+        return transformed[cols]
 
-    def fit_transform(self, X, y=None, use_selected=True):
+    def fit_transform(self, X, y=None):
         """Fit to X, y then transform X."""
         self.fit(X, y)
-        return self.transform(X, use_selected=use_selected)
+        return self.transform(X)
 
     # ------------------------------------------------------------------
     # Summary / selection helpers
@@ -236,6 +243,7 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
 
         Returns:
             dict: {feature: {"gini": float, "iv": float, "js": float}}
+                  Empty dict when metric=None.
         """
         check_is_fitted(self, "metric_values_")
         return self.metric_values_
@@ -245,8 +253,12 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
         Return a tidy DataFrame showing each feature's Gini, IV, JS,
         selection status and the reason for inclusion or exclusion.
 
+        When metric=None, metrics are not computed; all features are shown
+        as Selected with reason "No metric filtering (metric=None)".
+
         Returns:
-            DataFrame: Sorted descending by the active metric, with columns:
+            DataFrame: Sorted descending by the active metric (or by feature
+                name when metric=None), with columns:
                 feature, gini, iv, js, selection_status, reason.
         """
         check_is_fitted(self, "metric_values_")
@@ -256,29 +268,34 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
             m = self.metric_values_.get(
                 feature, {"gini": np.nan, "iv": np.nan, "js": np.nan}
             )
-            value = m[self.metric]
 
-            in_min = self.metric_min is None or (
-                not np.isnan(value) and value >= self.metric_min
-            )
-            in_max = self.metric_max is None or (
-                not np.isnan(value) and value <= self.metric_max
-            )
-            selected = in_min and in_max and not np.isnan(value)
-
-            if selected:
-                parts = []
-                if self.metric_min is not None:
-                    parts.append(f"{self.metric} >= {self.metric_min}")
-                if self.metric_max is not None:
-                    parts.append(f"{self.metric} <= {self.metric_max}")
-                reason = " and ".join(parts) if parts else "No threshold set"
-            elif np.isnan(value):
-                reason = "Metric extraction failed"
-            elif not in_min:
-                reason = f"{self.metric} < {self.metric_min}"
+            if self.metric is None:
+                selected = True
+                reason = "No metric filtering (metric=None)"
             else:
-                reason = f"{self.metric} > {self.metric_max}"
+                value = m[self.metric]
+                in_min = self.metric_min is None or (
+                    not np.isnan(value) and value >= self.metric_min
+                )
+                in_max = self.metric_max is None or (
+                    not np.isnan(value) and value <= self.metric_max
+                )
+                selected = in_min and in_max and not np.isnan(value)
+
+                if selected:
+                    parts = []
+                    if self.metric_min is not None:
+                        parts.append(f"{self.metric} >= {self.metric_min}")
+                    if self.metric_max is not None:
+                        parts.append(f"{self.metric} <= {self.metric_max}")
+                    reason = " and ".join(
+                        parts) if parts else "No threshold set"
+                elif np.isnan(value):
+                    reason = "Metric extraction failed"
+                elif not in_min:
+                    reason = f"{self.metric} < {self.metric_min}"
+                else:
+                    reason = f"{self.metric} > {self.metric_max}"
 
             rows.append({
                 "feature": feature,
@@ -290,7 +307,8 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
             })
 
         df = pd.DataFrame(rows)
-        return df.sort_values(by=self.metric, ascending=False).reset_index(drop=True)
+        sort_col = self.metric if self.metric is not None else "iv"
+        return df.sort_values(by=sort_col, ascending=False).reset_index(drop=True)
 
     # ------------------------------------------------------------------
     # Binning table & plot helpers
@@ -434,6 +452,19 @@ if __name__ == "__main__":
         df, y, test_size=0.2, random_state=42
     )
 
+    # Example 1: metric=None — bin everything, no filtering
+    binner_no_metric = DynamicBinningProcess(
+        metric=None,
+        binning_process_params={"max_n_bins": 5, "monotonic_trend": "auto"},
+        n_jobs=-1,
+    )
+    X_train_woe = binner_no_metric.fit_transform(X_train, y_train)
+    print("All features (metric=None):",
+          binner_no_metric.get_feature_names_out())
+    print(binner_no_metric.get_selection_summary())
+    print()
+
+    # Example 2: metric="iv" with thresholds
     binner = DynamicBinningProcess(
         metric="iv",
         metric_min=0.1,
