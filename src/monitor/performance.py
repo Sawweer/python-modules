@@ -47,12 +47,13 @@ class UnivariateGiniByDate:
 
 
 class MetricsByDate:
-    def __init__(self, df, date_column, target_column, score_column=None, pred_column=None, save_dir=None):
+    def __init__(self, df, date_column, target_column, score_column=None, pred_column=None, score_mode='lower_better', save_dir=None):
         self.df = df
         self.date_column = date_column
         self.target_column = target_column
         self.score_column = score_column
         self.pred_column = pred_column
+        self.score_mode = score_mode
         self._sorted_dates = df[date_column].sort_values().unique()
         self.save_dir = Path(save_dir) if save_dir else None
 
@@ -102,7 +103,11 @@ class MetricsByDate:
 
     def gini(self):
         def gini_coefficient(y_true, y_score):
-            return 2 * roc_auc_score(y_true, - y_score) - 1
+            if self.score_mode == 'lower_better':
+                y_score = -y_score
+            elif self.score_mode == 'higher_better':
+                y_score = y_score
+            return 2 * roc_auc_score(y_true, y_score) - 1
         return self._compute_by_date(gini_coefficient, "GINI", self.score_column)
 
     def f1(self):
