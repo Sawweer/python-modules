@@ -11,7 +11,7 @@ from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.utils import to_categorical
 
 
-def build_fn(
+def build_fn_multiclass(
     n_classes,
     n_layers,
     n_neurons,
@@ -79,7 +79,7 @@ class MLPMulticlassClassifier(ClassifierMixin, BaseEstimator):
         monitor="val_f1",
         f1_average="macro",
     ):
-        self.build_fn = build_fn
+        self.build_fn = build_fn_multiclass
         self.epochs = epochs
         self.batch_size = batch_size
         self.verbose = verbose

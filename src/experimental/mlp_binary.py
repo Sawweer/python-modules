@@ -21,7 +21,7 @@ f15 = keras.metrics.FBetaScore(
 f1 = keras.metrics.F1Score(threshold=0.5, name="f1")
 
 
-def build_fn(
+def build_fn_binary(
     n_layers,
     n_neurons,
     learning_rate,
@@ -82,7 +82,7 @@ class MLPBinaryClassifier(ClassifierMixin, BaseEstimator):
         min_delta=0,
         monitor="val_f1",
     ):
-        self.build_fn = build_fn
+        self.build_fn = build_fn_binary
         self.epochs = epochs
         self.batch_size = batch_size
         self.verbose = verbose
