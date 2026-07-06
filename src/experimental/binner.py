@@ -68,10 +68,10 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
         self.metric_min = metric_min
         self.metric_max = metric_max
         self.n_jobs = n_jobs
-        self.binning_process_params = binning_process_params or {}
+        self.binning_process_params = binning_process_params  # FIX: no `or {}`
         self.verbose = verbose
-        self.monotonic_trends = monotonic_trends or {}
-        self.user_splits = user_splits or {}
+        self.monotonic_trends = monotonic_trends              # FIX: no `or {}`
+        self.user_splits = user_splits                        # FIX: no `or {}`
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -153,15 +153,20 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
             X.select_dtypes(include="object").columns.tolist()
         )
 
+        # FIX: resolve None at point-of-use, not in __init__
+        _binning_process_params = self.binning_process_params or {}
+        _monotonic_trends = self.monotonic_trends or {}
+        _user_splits = self.user_splits or {}
+
         # Build per-variable binning params
         self.binning_fit_params_full_ = {}
         for col in self.feature_names_in_:
-            params = self.binning_process_params.copy()
-            params["monotonic_trend"] = self.monotonic_trends.get(
+            params = _binning_process_params.copy()
+            params["monotonic_trend"] = _monotonic_trends.get(
                 col, params.get("monotonic_trend")
             )
-            if col in self.user_splits:
-                params["user_splits"] = self.user_splits[col]
+            if col in _user_splits:
+                params["user_splits"] = _user_splits[col]
             self.binning_fit_params_full_[col] = params
 
         self.binner = BinningProcess(
@@ -351,7 +356,7 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
         Args:
             features (list, optional): Features to plot. Defaults to
                 selected_features_.
-            metric (str): Secondary axis metric — "WoE" or "Event rate".
+            metric (str): Secondary axis metric -- "WoE" or "Event rate".
                 Default is "WoE".
             save_dir (str, optional): Directory to save figures as PNGs.
                 If None, figures are shown interactively.
@@ -404,7 +409,7 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
             ax2.legend(loc="upper right", fontsize=9)
 
             plt.title(
-                f"{feature}  —  Count distribution & {line_label}",
+                f"{feature}  --  Count distribution & {line_label}",
                 fontsize=12, pad=12,
             )
             plt.tight_layout()
@@ -428,7 +433,7 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
             }
             styled = ft[print_cols].style.format(
                 {k: v for k, v in fmt.items() if k in print_cols}
-            ).set_caption(f"Binning table — {feature}")
+            ).set_caption(f"Binning table -- {feature}")
 
             try:
                 from IPython.display import display
@@ -452,7 +457,7 @@ if __name__ == "__main__":
         df, y, test_size=0.2, random_state=42
     )
 
-    # Example 1: metric=None — bin everything, no filtering
+    # Example 1: metric=None -- bin everything, no filtering
     binner_no_metric = DynamicBinningProcess(
         metric=None,
         binning_process_params={"max_n_bins": 5, "monotonic_trend": "auto"},
