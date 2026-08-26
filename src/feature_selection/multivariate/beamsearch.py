@@ -13,6 +13,8 @@ import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 from sklearn.metrics import roc_auc_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold, cross_val_score
 
 
 class ConstrainedBeamSearchSelector(TransformerMixin, BaseEstimator):
@@ -27,8 +29,6 @@ class ConstrainedBeamSearchSelector(TransformerMixin, BaseEstimator):
         Number of paths to retain per iteration.
     p_value_threshold : float, default=0.05
         Maximum p-value allowed for all features.
-    top_n : int, default=10
-        Number of top paths to retain in final beam summary.
     n_jobs : int, default=1
         Number of parallel jobs.
     verbose : bool, default=False
@@ -41,9 +41,9 @@ class ConstrainedBeamSearchSelector(TransformerMixin, BaseEstimator):
         beam_width: int = 50,
         p_value_threshold: float = 0.05,
         require_negative_coef: bool = True,
-        top_n: int = 10,
         n_jobs: int = 1,
         verbose: bool = False,
+        cv: int = 5
     ):
         """Create the selector.
 
@@ -58,8 +58,6 @@ class ConstrainedBeamSearchSelector(TransformerMixin, BaseEstimator):
             p-values are rejected).
         require_negative_coef : bool, default=True
             If True require selected feature coefficients to be negative.
-        top_n : int, default=10
-            Number of top paths included in the final summary.
         n_jobs : int, default=1
             Number of parallel jobs for candidate evaluation (joblib).
         verbose : bool, default=False
@@ -69,9 +67,9 @@ class ConstrainedBeamSearchSelector(TransformerMixin, BaseEstimator):
         self.beam_width = beam_width
         self.p_value_threshold = p_value_threshold
         self.require_negative_coef = require_negative_coef
-        self.top_n = top_n
         self.n_jobs = n_jobs
         self.verbose = verbose
+        self.cv = cv
 
     def _to_dataframe(self, X):
         """Normalize input to a pandas DataFrame.
@@ -140,7 +138,10 @@ class ConstrainedBeamSearchSelector(TransformerMixin, BaseEstimator):
             if (coefs >= 0).any():
                 return None
 
-        gini = 2 * roc_auc_score(y, model.predict(X_curr)) - 1
+        skf = StratifiedKFold(n_splits=self.cv, shuffle=True, random_state=42)
+        auc = cross_val_score(LogisticRegression(), X[list(
+            features)], y, cv=skf, scoring='roc_auc').mean()
+        gini = 2 * auc - 1
         return {"features": list(features), "gini": gini, "model": model}
 
     def fit(self, X, y):
@@ -164,7 +165,7 @@ class ConstrainedBeamSearchSelector(TransformerMixin, BaseEstimator):
 
         current_beam = [{"features": tuple(), "gini": 0.0}]
         self.beam_history_ = []
-
+        best_overall = None
         for depth in range(1, self.k + 1):
             candidate_paths = set()
             for path in current_beam:
@@ -190,13 +191,15 @@ class ConstrainedBeamSearchSelector(TransformerMixin, BaseEstimator):
 
             results.sort(key=lambda x: x["gini"], reverse=True)
             current_beam = results[: self.beam_width]
+            if best_overall is None or current_beam[0]["gini"] > best_overall["gini"]:
+                best_overall = current_beam[0]
             self.beam_history_.append(current_beam)
 
             if self.verbose:
                 print(
                     f"Depth {depth}: {len(results)} valid paths, best Gini={current_beam[0]['gini']:.4f}")
 
-        best = current_beam[0]
+        best = best_overall if best_overall is not None else current_beam[0]
         self.selected_features_ = best["features"]
         self.model_ = best["model"]
         self.gini_score_ = best["gini"]
@@ -208,7 +211,7 @@ class ConstrainedBeamSearchSelector(TransformerMixin, BaseEstimator):
                 "n_features": len(p["features"]),
                 "features": ", ".join(p["features"]),
             }
-            for i, p in enumerate(current_beam[: self.top_n])
+            for i, p in enumerate(current_beam)
         ])
 
         return self
@@ -268,7 +271,7 @@ if __name__ == "__main__":
     X = pd.DataFrame(data.data, columns=data.feature_names)
     y = pd.Series(data.target)
     selector = ConstrainedBeamSearchSelector(
-        k=3, beam_width=10, p_value_threshold=0.05, require_negative_coef=True, top_n=5, n_jobs=-1, verbose=True
+        k=3, beam_width=10, p_value_threshold=0.05, require_negative_coef=True, n_jobs=-1, verbose=True
     )
     selector.fit(X, y)
     print("Selected features:", selector.get_feature_names_out())

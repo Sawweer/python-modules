@@ -68,10 +68,10 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
         self.metric_min = metric_min
         self.metric_max = metric_max
         self.n_jobs = n_jobs
-        self.binning_process_params = binning_process_params or {}
+        self.binning_process_params = binning_process_params
         self.verbose = verbose
-        self.monotonic_trends = monotonic_trends or {}
-        self.user_splits = user_splits or {}
+        self.monotonic_trends = monotonic_trends
+        self.user_splits = user_splits
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -153,15 +153,18 @@ class DynamicBinningProcess(TransformerMixin, BaseEstimator):
             X.select_dtypes(include="object").columns.tolist()
         )
 
+        binning_process_params = self.binning_process_params or {}
+        monotonic_trends = self.monotonic_trends or {}
+        user_splits = self.user_splits or {}
         # Build per-variable binning params
         self.binning_fit_params_full_ = {}
         for col in self.feature_names_in_:
-            params = self.binning_process_params.copy()
-            params["monotonic_trend"] = self.monotonic_trends.get(
+            params = binning_process_params.copy()
+            params["monotonic_trend"] = monotonic_trends.get(
                 col, params.get("monotonic_trend")
             )
-            if col in self.user_splits:
-                params["user_splits"] = self.user_splits[col]
+            if col in user_splits:
+                params["user_splits"] = user_splits[col]
             self.binning_fit_params_full_[col] = params
 
         self.binner = BinningProcess(
