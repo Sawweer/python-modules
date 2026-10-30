@@ -23,10 +23,10 @@ class SelectByCorrAUC(TransformerMixin, BaseEstimator):
     corr_method : str, default='spearman'
         Correlation method passed to ``pd.DataFrame.corr``.
         One of ``'pearson'``, ``'spearman'``, ``'kendall'``.
-    inverted : bool, default=True
+    inverted : bool or None, default=True
         If True, negates raw feature values before computing AUC. Useful when
         a lower feature value indicates the positive class (e.g. a risk score
-        where smaller means higher risk). Ignored when ``model`` is provided.
+        where smaller means higher risk). Ignored when ``model`` is provided. If None, inversion is inferred.
     model : sklearn estimator or None, default=None
         If provided, this model is fitted on each feature individually and its
         predicted probabilities are used to compute AUC. The estimator must
@@ -59,7 +59,7 @@ class SelectByCorrAUC(TransformerMixin, BaseEstimator):
         self,
         corr_threshold=0.7,
         corr_method="spearman",
-        inverted=True,
+        inverted=None,
         model=None,
         cv=5,
     ):
@@ -204,8 +204,12 @@ class SelectByCorrAUC(TransformerMixin, BaseEstimator):
 
     def _compute_raw_auc(self, feature_series, y):
         """Compute ROC-AUC from raw feature values."""
-        values = -feature_series if self.inverted else feature_series
-        return roc_auc_score(y, values)
+        if self.inverted is None:
+            return max(roc_auc_score(y, feature_series), 1 - roc_auc_score(y, feature_series))
+        elif self.inverted is False:
+            return roc_auc_score(y, feature_series)
+        else:
+            return roc_auc_score(y, -feature_series)
 
     def _compute_model_auc(self, X_feature, y):
         """Fit ``self.model`` on a single feature and return its ROC-AUC and fitted model."""
